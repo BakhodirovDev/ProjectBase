@@ -1,0 +1,6 @@
+@BoomStream.UI_HostAddress = http://localhost:5255
+
+GET {{BoomStream.UI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
