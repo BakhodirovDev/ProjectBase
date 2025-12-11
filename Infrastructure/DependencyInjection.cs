@@ -1,4 +1,4 @@
-﻿using Domain.Abstraction;
+﻿using Domain.Abstraction.Base;
 using Infrastructure.Context;
 using Infrastructure.Repositories;
 using Microsoft.EntityFrameworkCore;

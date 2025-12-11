@@ -2,5 +2,5 @@
 
 public class RateLimiterOptions
 {
-    public GlobalLimiterOptions GlobalLimiter { get; set; }
+    public GlobalLimiterOptions GlobalLimiter { get; set; } = null!;
 }

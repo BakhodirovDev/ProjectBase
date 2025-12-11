@@ -1,6 +1,6 @@
 ## Loyiha haqida
 
-Bu ilova **.NET 9** platformasida ishlab chiqilgan va quyidagi xususiyatlarga ega:
+Bu ilova **.NET 10** platformasida ishlab chiqilgan va quyidagi xususiyatlarga ega:
 
 - **Serilog** yordamida ilovada loglash amalga oshiriladi, bu esa ilovaning ishlash holatini va xatoliklarni kuzatish imkonini beradi.
 - **Ratelimit** mexanizmi orqali API ga yuboriladigan so'rovlar soni cheklanadi, bu esa tizimning to'liq ishlashini ta'minlash uchun muhim.
