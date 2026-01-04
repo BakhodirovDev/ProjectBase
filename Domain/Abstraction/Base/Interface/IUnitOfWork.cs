@@ -3,9 +3,17 @@
 public interface IUnitOfWork : IDisposable
 {
     /// <summary>
-    /// Gets repository for specific entity type
+    /// Gets repository for specific entity type with Guid Id
     /// </summary>
-    IBaseRepository<TEntity> Repository<TEntity>() where TEntity : Entity;
+    IBaseRepository<TEntity> Repository<TEntity>()
+        where TEntity : Entity<Guid>;
+
+    /// <summary>
+    /// Gets repository for specific entity type with custom Id type
+    /// </summary>
+    IBaseRepository<TEntity, TId> Repository<TEntity, TId>()
+        where TEntity : Entity<TId>
+        where TId : notnull;
 
     /// <summary>
     /// Saves all changes

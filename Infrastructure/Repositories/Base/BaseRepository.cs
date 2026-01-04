@@ -1,19 +1,29 @@
-﻿using Domain.Abstraction.Base;
+﻿using Consts;
+using Domain.Abstraction.Base;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Linq.Expressions;
 
 namespace Infrastructure.Repositories;
 
-public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Entity
+/// <summary>
+/// Generic repository implementation with custom Id type
+/// </summary>
+public class Repository<TEntity, TId> : IBaseRepository<TEntity, TId>
+    where TEntity : Entity<TId>
+    where TId : notnull
 {
     protected readonly DbContext _context;
     protected readonly DbSet<TEntity> _dbSet;
-    protected readonly ILogger<Repository<TEntity>> _logger;
+    protected readonly ILogger<Repository<TEntity, TId>> _logger;
+
+    // Cache the type check results for performance
+    private static readonly bool _isAuditableEntity = typeof(AuditableEntity<TId>).IsAssignableFrom(typeof(TEntity));
+    private static readonly bool _isSoftDelete = typeof(ISoftDelete).IsAssignableFrom(typeof(TEntity));
 
     public Repository(
         DbContext context,
-        ILogger<Repository<TEntity>> logger)
+        ILogger<Repository<TEntity, TId>> logger)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _dbSet = context.Set<TEntity>();
@@ -24,22 +34,38 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
     {
         IQueryable<TEntity> query = _dbSet;
 
-        // Automatic soft delete filter
-        if (typeof(ISoftDelete).IsAssignableFrom(typeof(TEntity)))
+        // Automatic soft delete filter for AuditableEntity (StatusId based)
+        if (_isAuditableEntity)
         {
-            query = query.Where(e => !((ISoftDelete)e).IsDeleted);
+            query = query.Where(e => ((AuditableEntity<TId>)(object)e).StatusId != StatusIdConst.DELETED);
+        }
+        // Fallback for ISoftDelete interface
+        else if (_isSoftDelete)
+        {
+            query = query.Where(e => !((ISoftDelete)(object)e).IsDeleted);
         }
 
         return query;
     }
 
     public virtual async Task<TEntity?> GetByIdAsync(
-        Guid id,
+        TId id,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            return await _dbSet.FindAsync(new object[] { id }, cancellationToken);
+            var entity = await _dbSet.FindAsync(new object[] { id! }, cancellationToken);
+
+            // Check if entity is soft deleted
+            if (entity != null)
+            {
+                if (_isAuditableEntity && entity is AuditableEntity<TId> auditable && auditable.IsDeleted())
+                    return null;
+                if (_isSoftDelete && entity is ISoftDelete softDelete && softDelete.IsDeleted)
+                    return null;
+            }
+
+            return entity;
         }
         catch (Exception ex)
         {
@@ -49,19 +75,19 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
     }
 
     public virtual async Task<TEntity?> GetByIdAsync(
-        Guid id,
+        TId id,
         params Expression<Func<TEntity, object>>[] includes)
     {
         try
         {
-            IQueryable<TEntity> query = _dbSet;
+            IQueryable<TEntity> query = GetQueryable();
 
             foreach (var include in includes)
             {
                 query = query.Include(include);
             }
 
-            return await query.FirstOrDefaultAsync(e => e.Id == id);
+            return await query.FirstOrDefaultAsync(e => e.Id.Equals(id));
         }
         catch (Exception ex)
         {
@@ -121,10 +147,10 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
     }
 
     public virtual async Task<bool> ExistsAsync(
-        Guid id,
+        TId id,
         CancellationToken cancellationToken = default)
     {
-        return await _dbSet.AnyAsync(e => e.Id == id, cancellationToken);
+        return await _dbSet.AnyAsync(e => e.Id.Equals(id), cancellationToken);
     }
 
     public virtual async Task<bool> AnyAsync(
@@ -154,26 +180,12 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
             .FirstOrDefaultAsync(predicate, cancellationToken);
     }
 
-    public virtual async Task<TEntity?> SingleOrDefaultAsync(
-        Expression<Func<TEntity, bool>> predicate,
-        CancellationToken cancellationToken = default)
-    {
-        return await GetQueryable()
-            .SingleOrDefaultAsync(predicate, cancellationToken);
-    }
-
     public virtual async Task<TEntity> AddAsync(
         TEntity entity,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            // Set audit fields if applicable
-            if (entity is IAuditable auditable && auditable.CreatedBy == null)
-            {
-                // You can get current user from IHttpContextAccessor here
-            }
-
             await _dbSet.AddAsync(entity, cancellationToken);
             return entity;
         }
@@ -203,8 +215,8 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
     {
         try
         {
-            // Set audit fields
-            if (entity is AuditableEntity auditable)
+            // Set audit fields for AuditableEntity
+            if (entity is AuditableEntity<TId> auditable)
             {
                 auditable.MarkAsUpdated();
             }
@@ -224,7 +236,7 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
         {
             foreach (var entity in entities)
             {
-                if (entity is AuditableEntity auditable)
+                if (entity is AuditableEntity<TId> auditable)
                 {
                     auditable.MarkAsUpdated();
                 }
@@ -243,12 +255,20 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
     {
         try
         {
-            // Soft delete if supported
-            if (entity is AuditableEntity auditable)
+            // Soft delete for AuditableEntity (uses StatusId)
+            if (entity is AuditableEntity<TId> auditable)
             {
                 auditable.MarkAsDeleted();
-                Update(entity);
+                _dbSet.Update(entity);
             }
+            // Soft delete for ISoftDelete interface
+            else if (entity is ISoftDelete softDelete)
+            {
+                softDelete.IsDeleted = true;
+                softDelete.DeletedAt = DateTime.UtcNow;
+                _dbSet.Update(entity);
+            }
+            // Hard delete
             else
             {
                 _dbSet.Remove(entity);
@@ -262,7 +282,7 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
     }
 
     public virtual async Task<bool> DeleteAsync(
-        Guid id,
+        TId id,
         CancellationToken cancellationToken = default)
     {
         try
@@ -296,5 +316,19 @@ public class Repository<TEntity> : IBaseRepository<TEntity> where TEntity : Enti
             _logger.LogError(ex, "Error deleting entities");
             throw;
         }
+    }
+}
+
+/// <summary>
+/// Repository for entities with Guid Id (backward compatibility)
+/// </summary>
+public class Repository<TEntity> : Repository<TEntity, Guid>, IBaseRepository<TEntity>
+    where TEntity : Entity<Guid>
+{
+    public Repository(
+        DbContext context,
+        ILogger<Repository<TEntity, Guid>> logger)
+        : base(context, logger)
+    {
     }
 }

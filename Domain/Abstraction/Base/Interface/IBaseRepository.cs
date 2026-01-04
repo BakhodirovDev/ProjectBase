@@ -3,21 +3,18 @@
 namespace Domain.Abstraction.Base;
 
 /// <summary>
-/// Base repository interface for entity operations
-/// Provides comprehensive data access methods following repository pattern
+/// Generic base repository interface
 /// </summary>
-public interface IBaseRepository<TEntity> where TEntity : Entity
+public interface IBaseRepository<TEntity, TId>
+    where TEntity : Entity<TId>
+    where TId : notnull
 {
-    // ========================================================================
-    // QUERY OPERATIONS
-    // ========================================================================
-
     IQueryable<TEntity> GetQueryable();
 
-    Task<TEntity?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<TEntity?> GetByIdAsync(TId id, CancellationToken cancellationToken = default);
 
     Task<TEntity?> GetByIdAsync(
-        Guid id,
+        TId id,
         params Expression<Func<TEntity, object>>[] includes);
 
     Task<List<TEntity>> FindAsync(
@@ -31,7 +28,7 @@ public interface IBaseRepository<TEntity> where TEntity : Entity
         Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>>? orderBy = null,
         CancellationToken cancellationToken = default);
 
-    Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<bool> ExistsAsync(TId id, CancellationToken cancellationToken = default);
 
     Task<bool> AnyAsync(
         Expression<Func<TEntity, bool>> predicate,
@@ -45,10 +42,6 @@ public interface IBaseRepository<TEntity> where TEntity : Entity
         Expression<Func<TEntity, bool>> predicate,
         CancellationToken cancellationToken = default);
 
-    // ========================================================================
-    // WRITE OPERATIONS
-    // ========================================================================
-
     Task<TEntity> AddAsync(TEntity entity, CancellationToken cancellationToken = default);
 
     Task AddRangeAsync(IEnumerable<TEntity> entities, CancellationToken cancellationToken = default);
@@ -59,7 +52,15 @@ public interface IBaseRepository<TEntity> where TEntity : Entity
 
     void Delete(TEntity entity);
 
-    Task<bool> DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<bool> DeleteAsync(TId id, CancellationToken cancellationToken = default);
 
     void DeleteRange(IEnumerable<TEntity> entities);
+}
+
+/// <summary>
+/// Base repository for Guid entities (backward compatibility)
+/// </summary>
+public interface IBaseRepository<TEntity> : IBaseRepository<TEntity, Guid>
+    where TEntity : Entity<Guid>
+{
 }

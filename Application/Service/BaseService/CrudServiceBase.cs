@@ -1,11 +1,11 @@
 ﻿using AutoMapper;
+using Consts;
 using Domain.Abstraction.Base;
 using Domain.Abstraction.Errors;
 using Domain.Abstraction.Results;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Linq.Expressions;
-
 
 namespace Application.Service.BaseService;
 
@@ -15,7 +15,7 @@ namespace Application.Service.BaseService;
 /// </summary>
 public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TUpdateDto, TPaginationOptions>
     : ICrudService<TGetDto, TListDto, TCreateDto, TUpdateDto, TPaginationOptions>
-    where TEntity : Entity
+    where TEntity : Entity<Guid>
     where TPaginationOptions : PaginationParameters
 {
     protected readonly IBaseRepository<TEntity> Repository;
@@ -77,22 +77,16 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
         {
             var query = Repository.GetQueryable().AsNoTracking();
 
-            // Apply filters
             query = ApplyBaseFilters(query);
             query = await ApplyCustomFiltersAsync(query, paginationParams, cancellationToken);
 
-            // Get total count before pagination
             var totalCount = await query.CountAsync(cancellationToken);
 
-            // Apply sorting
             query = ApplySorting(query, paginationParams);
-
-            // Apply pagination
             query = query
                 .Skip((paginationParams.PageNumber - 1) * paginationParams.PageSize)
                 .Take(paginationParams.PageSize);
 
-            // Execute query
             var entities = await query.ToListAsync(cancellationToken);
             var dtos = Mapper.Map<List<TListDto>>(entities);
 
@@ -158,24 +152,18 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
     {
         try
         {
-            // Validate
             var validationResult = await ValidateCreateAsync(createDto, cancellationToken);
             if (!validationResult.IsSuccess)
                 return Result<TGetDto>.Failure(validationResult.Error);
 
-            // Map to entity
             var entity = Mapper.Map<TEntity>(createDto);
 
-            // Apply business rules
             await ApplyCreateBusinessRulesAsync(entity, createDto, cancellationToken);
 
-            // Add to repository
             await Repository.AddAsync(entity, cancellationToken);
 
-            // Post-create operations
             await OnEntityCreatedAsync(entity, cancellationToken);
 
-            // Return result
             var dto = Mapper.Map<TGetDto>(entity);
             return Result<TGetDto>.Success(dto);
         }
@@ -193,34 +181,26 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
     {
         try
         {
-            // Get existing entity
             var entity = await Repository.GetByIdAsync(id, cancellationToken);
             if (entity == null)
                 return Result<TGetDto>.Failure(
                     Error.NotFoundWithEntity(typeof(TEntity).Name, id));
 
-            // Check permissions
             if (!await CanUpdateAsync(entity, cancellationToken))
                 return Result<TGetDto>.Failure(Error.Forbidden);
 
-            // Validate
             var validationResult = await ValidateUpdateAsync(entity, updateDto, cancellationToken);
             if (!validationResult.IsSuccess)
                 return Result<TGetDto>.Failure(validationResult.Error);
 
-            // Map updates
             Mapper.Map(updateDto, entity);
 
-            // Apply business rules
             await ApplyUpdateBusinessRulesAsync(entity, updateDto, cancellationToken);
 
-            // Update
             Repository.Update(entity);
 
-            // Post-update operations
             await OnEntityUpdatedAsync(entity, cancellationToken);
 
-            // Return result
             var dto = Mapper.Map<TGetDto>(entity);
             return Result<TGetDto>.Success(dto);
         }
@@ -273,17 +253,14 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
                 return Result<bool>.Failure(
                     Error.NotFoundWithEntity(typeof(TEntity).Name, id));
 
-            if (entity is not ISoftDeletable softDeleteEntity)
+            // Check if entity supports soft delete
+            if (entity is not AuditableEntity auditableEntity)
                 return await DeleteAsync(id, cancellationToken);
 
             if (!await CanDeleteAsync(entity, cancellationToken))
                 return Result<bool>.Failure(Error.Forbidden);
 
-            // Use proper method if AuditableEntity
-            if (entity is AuditableEntity auditable)
-            {
-                auditable.MarkAsDeleted();
-            }
+            auditableEntity.MarkAsDeleted();
 
             Repository.Update(entity);
 
@@ -309,15 +286,12 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
                 return Result<bool>.Failure(
                     Error.NotFoundWithEntity(typeof(TEntity).Name, id));
 
-            if (entity is not ISoftDeletable)
+            // Check if entity supports soft delete
+            if (entity is not AuditableEntity auditableEntity)
                 return Result<bool>.Failure(
                     Error.Custom("NOT_SUPPORTED", "Entity does not support soft delete"));
 
-            // Use proper method if AuditableEntity
-            if (entity is AuditableEntity auditable)
-            {
-                auditable.MarkAsRestored();
-            }
+            auditableEntity.MarkAsRestored();
 
             Repository.Update(entity);
 
@@ -412,15 +386,17 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
     }
 
     // ========================================================================
-    // ABSTRACT METHODS
+    // FILTER AND PROJECTION METHODS
     // ========================================================================
 
     protected virtual IQueryable<TEntity> ApplyIncludes(IQueryable<TEntity> query) => query;
 
     protected virtual IQueryable<TEntity> ApplyBaseFilters(IQueryable<TEntity> query)
     {
-        if (typeof(ISoftDeletable).IsAssignableFrom(typeof(TEntity)))
-            query = query.Where(e => !((ISoftDeletable)e).IsDeleted);
+        if (typeof(IAuditableEntity).IsAssignableFrom(typeof(TEntity)))
+        {
+            return query.Where(e => ((IAuditableEntity)e).StatusId != StatusIdConst.DELETED);
+        }
 
         return query;
     }
@@ -458,8 +434,7 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
     {
         if (typeof(IAuditableEntity).IsAssignableFrom(typeof(TEntity)))
         {
-            // Assuming entities with IAuditableEntity also have IsActive
-            // You might need to create IActivatable interface
+            return query.Where(e => e is IAuditableEntity && ((IAuditableEntity)e).StatusId != StatusIdConst.DELETED);
         }
 
         return ApplyBaseFilters(query);

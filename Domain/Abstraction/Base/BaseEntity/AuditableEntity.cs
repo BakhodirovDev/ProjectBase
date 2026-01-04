@@ -1,36 +1,40 @@
-﻿namespace Domain.Abstraction.Base;
+﻿using Consts;
+using Domain.Models.Enums;
 
-public abstract class AuditableEntity : Entity, IAuditableEntity, ISoftDeletable
+namespace Domain.Abstraction.Base;
+
+public abstract class AuditableEntity<TId> : Entity<TId>, IAuditableEntity
+    where TId : notnull
 {
-    public DateTime CreatedAt { get; private set; }
+    public DateTime CreatedAt { get; private set; } = DateTime.Now;
     public Guid? CreatedBy { get; private set; }
     public DateTime? UpdatedAt { get; private set; }
     public Guid? UpdatedBy { get; private set; }
-    public DateTime? DeletedAt { get; private set; }
-    public Guid? DeletedBy { get; private set; }
-    public bool IsDeleted { get; private set; }
+    public int StatusId { get; private set; }
 
-    protected AuditableEntity() : base()
+    public virtual EnumStatus Status { get; private set; } = null!;
+
+    protected AuditableEntity(TId id) : base(id)
     {
         CreatedAt = DateTime.UtcNow;
-        IsDeleted = false;
+        StatusId = StatusIdConst.CREATED;
     }
 
-    protected AuditableEntity(Guid id) : base(id)
-    {
-        CreatedAt = DateTime.UtcNow;
-        IsDeleted = false;
-    }
-
-    protected AuditableEntity(Guid? createdBy) : base()
+    protected AuditableEntity(TId id, Guid? createdBy) : base(id)
     {
         CreatedAt = DateTime.UtcNow;
         CreatedBy = createdBy;
-        IsDeleted = false;
+        StatusId = StatusIdConst.CREATED;
+    }
+
+    protected AuditableEntity(TId id, int statusId) : base(id)
+    {
+        CreatedAt = DateTime.UtcNow;
+        StatusId = statusId;
     }
 
     /// <summary>
-    /// Marks entity as created by user
+    /// Marks entity as created by User
     /// </summary>
     public void SetCreatedBy(Guid userId)
     {
@@ -40,7 +44,7 @@ public abstract class AuditableEntity : Entity, IAuditableEntity, ISoftDeletable
     /// <summary>
     /// Sets the entity ID (used for deserialization)
     /// </summary>
-    public void IdSet(Guid id)
+    public void IdSet(TId id)
     {
         SetId(id);
     }
@@ -55,41 +59,64 @@ public abstract class AuditableEntity : Entity, IAuditableEntity, ISoftDeletable
     }
 
     /// <summary>
-    /// Soft deletes the entity
+    /// Changes the entity status
     /// </summary>
-    public void MarkAsDeleted(Guid? userId = null)
+    public void ChangeStatus(int statusId, Guid? userId = null)
     {
-        if (IsDeleted)
+        if (StatusId == statusId)
             return;
 
-        IsDeleted = true;
-        DeletedAt = DateTime.UtcNow;
-        DeletedBy = userId;
-        UpdatedAt = DateTime.UtcNow;
-        UpdatedBy = userId;
+        StatusId = statusId;
+        MarkAsUpdated(userId);
     }
 
     /// <summary>
-    /// Restores a soft deleted entity
+    /// Activates the entity
+    /// </summary>
+    public void Activate(Guid? userId = null)
+    {
+        ChangeStatus(StatusIdConst.CREATED, userId);
+    }
+
+
+    /// <summary>
+    /// Soft deletes the entity (changes status to DELETED)
+    /// </summary>
+    public void MarkAsDeleted(Guid? userId = null)
+    {
+        if (IsDeleted())
+            return;
+
+        ChangeStatus(StatusIdConst.DELETED, userId);
+    }
+
+    /// <summary>
+    /// Restores a soft deleted entity (changes status to CREATED)
     /// </summary>
     public void MarkAsRestored(Guid? userId = null)
     {
-        if (!IsDeleted)
+        if (!IsDeleted())
             return;
 
-        IsDeleted = false;
-        DeletedAt = null;
-        DeletedBy = null;
-        UpdatedAt = DateTime.UtcNow;
-        UpdatedBy = userId;
+        ChangeStatus(StatusIdConst.CREATED, userId);
     }
+
+    /// <summary>
+    /// Checks if entity is deleted
+    /// </summary>
+    public bool IsDeleted() => StatusId == StatusIdConst.DELETED;
+
+    /// <summary>
+    /// Checks if entity is active
+    /// </summary>
+    public bool IsActive() => StatusId == StatusIdConst.CREATED;
 
     /// <summary>
     /// Checks if entity can be deleted
     /// </summary>
     public virtual bool CanDelete()
     {
-        return !IsDeleted;
+        return !IsDeleted();
     }
 
     /// <summary>
@@ -97,7 +124,7 @@ public abstract class AuditableEntity : Entity, IAuditableEntity, ISoftDeletable
     /// </summary>
     public virtual bool CanRestore()
     {
-        return IsDeleted;
+        return IsDeleted();
     }
 
     /// <summary>
@@ -108,16 +135,19 @@ public abstract class AuditableEntity : Entity, IAuditableEntity, ISoftDeletable
         Guid? createdBy = null,
         DateTime? updatedAt = null,
         Guid? updatedBy = null,
-        DateTime? deletedAt = null,
-        Guid? deletedBy = null,
-        bool isDeleted = false)
+        int statusId = StatusIdConst.CREATED)
     {
         CreatedAt = createdAt;
         CreatedBy = createdBy;
         UpdatedAt = updatedAt;
         UpdatedBy = updatedBy;
-        DeletedAt = deletedAt;
-        DeletedBy = deletedBy;
-        IsDeleted = isDeleted;
+        StatusId = statusId;
     }
+}
+
+public abstract class AuditableEntity : AuditableEntity<Guid>
+{
+    protected AuditableEntity() : base(Guid.NewGuid()) { }
+    protected AuditableEntity(Guid id) : base(id) { }
+    protected AuditableEntity(Guid? createdBy) : base(Guid.NewGuid(), createdBy) { }
 }

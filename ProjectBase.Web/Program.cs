@@ -1,4 +1,5 @@
 using Application.Extensions;
+using Infrastructure.Seeds;
 using Microsoft.AspNetCore.HttpOverrides;
 using ProjectBase.WebApi.Extensions;
 using ProjectBase.WebApi.Middleware;
@@ -16,6 +17,15 @@ builder.Host.UseSerilog();
 
 var app = builder.Build();
 
+// Seed permissions and roles
+if (builder.Environment.IsDevelopment())
+{
+    await SeedDefaultEnums.SeedAsync(app);
+    await SeedDefaultInfo.SeedAsync(app);
+    await SeedDefaultPersonAndUser.SeedAsync(app);
+    await SeedPermissionsAndRoles.SeedAsync(app);
+}
+
 app.UseRateLimiter();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -29,8 +39,12 @@ var allowedSwaggerIps = builder.Configuration
 
 if (swaggerEnabled && (app.Environment.IsDevelopment() || app.Environment.IsStaging()))
 {
+    var swaggerRoutePrefix = app.Configuration["SwaggerSettings:RoutePrefix"] ?? "swagger";
+    var swaggerVersion = app.Configuration["SwaggerSettings:Version"] ?? "v1";
+
     app.UseWhen(
-        context => context.Request.Path.StartsWithSegments("/swagger"),
+        context => context.Request.Path.StartsWithSegments("/" + swaggerRoutePrefix) ||
+                   context.Request.Path.StartsWithSegments("/swagger"),
         appBuilder =>
         {
             appBuilder.Use(async (context, next) =>
@@ -49,11 +63,14 @@ if (swaggerEnabled && (app.Environment.IsDevelopment() || app.Environment.IsStag
         }
     );
 
-    app.UseSwagger();
+    app.UseSwagger(c =>
+    {
+        c.RouteTemplate = $"{swaggerRoutePrefix}/{{documentName}}/swagger.json";
+    });
     app.UseSwaggerUI(c =>
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "ProjectBase API v1");
-        c.RoutePrefix = app.Configuration["SwaggerSettings:RoutePrefix"] ?? string.Empty;
+        c.SwaggerEndpoint($"/{swaggerRoutePrefix}/{swaggerVersion}/swagger.json", $"ProjectBase API {swaggerVersion}");
+        c.RoutePrefix = swaggerRoutePrefix + "/" + swaggerVersion;
         c.DocumentTitle = app.Configuration["SwaggerSettings:Title"] ?? "ProjectBase API";
         c.DisplayOperationId();
         c.EnableTryItOutByDefault();
@@ -67,7 +84,7 @@ if (swaggerEnabled && (app.Environment.IsDevelopment() || app.Environment.IsStag
         c.InjectJavascript("/js/swagger-auth.js");
     });
 
-    Log.Information("Swagger is enabled at {SwaggerUrl}", $"{app.Configuration["SwaggerSettings:RoutePrefix"] ?? "/"}/swagger");
+    Log.Information("Swagger is enabled at /{SwaggerRoutePrefix}/{swaggerVersion}/index.html", swaggerRoutePrefix, swaggerVersion);
 }
 else if (swaggerEnabled && app.Environment.IsProduction())
 {

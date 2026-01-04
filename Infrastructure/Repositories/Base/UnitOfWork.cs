@@ -51,17 +51,33 @@ public class UnitOfWork : IUnitOfWork
         _context.Dispose();
     }
 
-    public IBaseRepository<TEntity> Repository<TEntity>() where TEntity : Entity
+    public IBaseRepository<TEntity> Repository<TEntity>() where TEntity : Entity<Guid>
     {
         var type = typeof(TEntity);
 
         if (!_repositories.ContainsKey(type))
         {
-            var logger = _loggerFactory.CreateLogger<Repository<TEntity>>();
+            var logger = _loggerFactory.CreateLogger<Repository<TEntity, Guid>>();
             var repository = new Repository<TEntity>(_context, logger);
             _repositories[type] = repository;
         }
 
         return (IBaseRepository<TEntity>)_repositories[type];
+    }
+
+    public IBaseRepository<TEntity, TId> Repository<TEntity, TId>()
+        where TEntity : Entity<TId>
+        where TId : notnull
+    {
+        var type = typeof(TEntity);
+
+        if (!_repositories.ContainsKey(type))
+        {
+            var logger = _loggerFactory.CreateLogger<Repository<TEntity, TId>>();
+            var repository = new Repository<TEntity, TId>(_context, logger);
+            _repositories[type] = repository;
+        }
+
+        return (IBaseRepository<TEntity, TId>)_repositories[type];
     }
 }

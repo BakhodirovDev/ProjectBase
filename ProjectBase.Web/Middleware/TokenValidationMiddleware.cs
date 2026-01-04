@@ -1,7 +1,5 @@
 ﻿using Application.Extensions;
-using Microsoft.Extensions.Primitives;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
+using Application.Service;
 
 namespace ProjectBase.WebApi.Middleware;
 
@@ -13,135 +11,77 @@ public class TokenValidationMiddleware
     private static readonly HashSet<string> _bypassPaths = new(StringComparer.OrdinalIgnoreCase)
     {
         "/swagger",
-        "/health"
+        "/health",
+        "/Auth/SignIn",
     };
 
-    public TokenValidationMiddleware(
-        RequestDelegate next,
-        ILogger<TokenValidationMiddleware> logger)
+    public TokenValidationMiddleware(RequestDelegate next, ILogger<TokenValidationMiddleware> logger)
     {
-        _next = next;
-        _logger = logger;
+        _next = next ?? throw new ArgumentNullException(nameof(next));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task InvokeAsync(HttpContext context)
+    public async Task InvokeAsync(HttpContext context, IServiceProvider serviceProvider)
     {
-        if (ShouldBypassValidation(context.Request.Path))
+        var path = context.Request.Path;
+
+        if (ShouldBypassValidation(path))
         {
             await _next(context);
             return;
         }
 
-        var token = ExtractToken(context.Request.Headers.Authorization);
-
-        if (string.IsNullOrEmpty(token))
+        var authHeader = context.Request.Headers.Authorization.ToString();
+        if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {
             await _next(context);
             return;
         }
 
-        var validationResult = ValidateToken(token);
+        var token = authHeader[7..].Trim();
 
-        if (!validationResult.IsValid)
+        using var scope = serviceProvider.CreateScope();
+        var jwtTokenService = scope.ServiceProvider.GetRequiredService<JwtTokenService>();
+
+        try
         {
-            var clientIp = context.GetClientIpAddress();
-            var userAgent = context.Request.Headers.UserAgent.ToString();
+            var isAuthenticated = await jwtTokenService.IsAuthenticatedAsync();
 
-            _logger.LogWarning(
-                "Invalid token. Reason: {Reason}, IP: {IpAddress}, UserAgent: {UserAgent}",
-                validationResult.ErrorMessage, clientIp, userAgent);
+            if (!isAuthenticated)
+            {
+                _logger.LogWarning("Unauthorized access attempt: Invalid or Revoked token. IP: {Ip}", context.GetClientIpAddress());
+                await WriteUnauthorizedResponse(context, "Token is invalid, expired or revoked.");
+                return;
+            }
 
-            await WriteUnauthorizedResponse(context, validationResult.ErrorMessage);
-            return;
+            await _next(context);
         }
-
-        _logger.LogDebug("Token validated successfully. UserId: {UserId}", validationResult.UserId);
-
-        await _next(context);
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error occurred during token validation.");
+            await WriteUnauthorizedResponse(context, "An internal error occurred during authentication.");
+        }
     }
 
     private static bool ShouldBypassValidation(PathString path)
     {
-        return _bypassPaths.Any(bypassPath =>
-            path.StartsWithSegments(bypassPath, StringComparison.OrdinalIgnoreCase));
+        return _bypassPaths.Any(p => path.StartsWithSegments(p, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string? ExtractToken(StringValues authorizationHeader)
+    private static async Task WriteUnauthorizedResponse(HttpContext context, string message)
     {
-        var headerValue = authorizationHeader.ToString();
+        if (context.Response.HasStarted) return;
 
-        if (string.IsNullOrWhiteSpace(headerValue))
-            return null;
-
-        return headerValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? headerValue[7..].Trim()
-            : headerValue.Trim();
-    }
-
-    private static TokenValidationResult ValidateToken(string token)
-    {
-        var handler = new JwtSecurityTokenHandler();
-
-        if (!handler.CanReadToken(token))
-        {
-            return TokenValidationResult.Failed("Invalid token format");
-        }
-
-        JwtSecurityToken jwtToken;
-        try
-        {
-            jwtToken = handler.ReadJwtToken(token);
-        }
-        catch (Exception ex)
-        {
-            return TokenValidationResult.Failed($"Token parsing error: {ex.Message}");
-        }
-
-        var userId = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-
-        if (string.IsNullOrEmpty(userId))
-        {
-            return TokenValidationResult.Failed("Token missing required claims");
-        }
-
-        return TokenValidationResult.Success(userId);
-    }
-
-    private static async Task WriteUnauthorizedResponse(HttpContext context, string? message)
-    {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.ContentType = "application/json";
 
-        var response = new
+        await context.Response.WriteAsJsonAsync(new
         {
-            type = "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401",
             title = "Unauthorized",
             status = 401,
-            detail = message ?? "Invalid token",
+            detail = message,
             traceId = context.TraceIdentifier,
             timestamp = DateTime.UtcNow
-        };
-
-        await context.Response.WriteAsJsonAsync(response);
-    }
-
-    private class TokenValidationResult
-    {
-        public bool IsValid { get; }
-        public string? UserId { get; }
-        public string? ErrorMessage { get; }
-
-        private TokenValidationResult(bool isValid, string? userId, string? errorMessage)
-        {
-            IsValid = isValid;
-            UserId = userId;
-            ErrorMessage = errorMessage;
-        }
-
-        public static TokenValidationResult Success(string userId)
-            => new(true, userId, null);
-
-        public static TokenValidationResult Failed(string errorMessage)
-            => new(false, null, errorMessage);
+        });
     }
 }

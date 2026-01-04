@@ -6,4 +6,5 @@ public interface IAuditableEntity
     Guid? CreatedBy { get; }
     DateTime? UpdatedAt { get; }
     Guid? UpdatedBy { get; }
+    int StatusId { get; }
 }

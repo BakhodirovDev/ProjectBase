@@ -155,6 +155,41 @@ public sealed record Error
         "A database error occurred",
         HttpStatusCode.InternalServerError);
 
+    /// <summary>
+    /// Login faild
+    /// </summary>
+    public static readonly Error LoginFaild = new(
+        ErrorCodes.BadRequest,
+        "Username or Password is incorrect",
+        HttpStatusCode.BadRequest);
+
+    /// <summary>
+    /// Token not found
+    /// </summary>
+    public static readonly Error TokenNotFound = new(
+        ErrorCodes.NotFound,
+        "Token not found",
+        HttpStatusCode.NotFound);
+
+    public static Error RefreshTokenInvalid => new(
+        "Auth.RefreshTokenExpired",
+        "Refresh token is expired or invalid.",
+        HttpStatusCode.Unauthorized);
+
+    public static Error UserNotFound => new(
+        "User.NotFound",
+        "Foydalanuvchi topilmadi",
+        HttpStatusCode.NotFound);
+
+    /// <summary>
+    /// Logout faild
+    /// </summary>
+
+    public static Error LogoutFaild => new(
+        "Auth.LogoutFaild",
+        "Tizimdan chiqishda muammo yuz berdi. Iltimos, qaytadan urinib ko'ring.",
+        HttpStatusCode.InternalServerError);
+
     // ========================================================================
     // FACTORY METHODS
     // ========================================================================
