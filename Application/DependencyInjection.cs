@@ -1,10 +1,8 @@
 ﻿using Application.Service;
-using Application.Service.BaseService;
 using Domain;
 using Domain.Abstraction;
-using Domain.Abstraction.Authentication;
-using Domain.Abstraction.Base;
 using Domain.Abstraction.Jwt;
+using Domain.EfClasses.Authentication;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
@@ -18,12 +16,10 @@ public static class DependencyInjection
         services.AddHttpContextAccessor();
         services.AddScoped<JwtOption>();
         services.AddScoped<JwtTokenService>();
-        
-        // Authentication Services
         services.AddScoped<IAuthService, AuthService>();
-        
-        // IP Geolocation Service
+        services.AddScoped<IPermissionService, PermissionService>();
         services.AddHttpClient<IIpGeolocationService, IpGeolocationService>();
+        services.AddAutoMapper(cfg => { }, typeof(DependencyInjection).Assembly);
 
         var logger = new LoggerConfiguration()
             .ReadFrom.Configuration(configuration)

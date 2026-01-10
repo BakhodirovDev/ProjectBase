@@ -184,10 +184,13 @@ public static class SwaggerExtensions
             var urls = aspnetUrls.Split(';');
             foreach (var url in urls)
             {
-                if (!string.IsNullOrEmpty(url))
+                var cleanUrl = url.Replace("*", "localhost").Replace("+", "localhost");
+
+                if (Uri.TryCreate(cleanUrl, UriKind.Absolute, out var uri))
                 {
-                    var uri = new Uri(url);
-                    var host = uri.Host == "0.0.0.0" || uri.Host == "::" ? "localhost" : uri.Host;
+                    var host = (uri.Host == "0.0.0.0" || uri.Host == "[::]" || uri.Host == "::")
+                               ? "localhost"
+                               : uri.Host;
 
                     servers.Add(new OpenApiServer
                     {

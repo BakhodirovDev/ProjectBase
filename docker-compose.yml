@@ -1,0 +1,297 @@
+# ============================================
+# ProjectBase - Docker Compose (Production-Ready)
+# ============================================
+# 📌 PROFILES:
+#   dev  - Faqat DB + Redis (API lokal)
+#   full - Full stack (hardcoded, test uchun)
+#   prod - Production (smart defaults + .env)
+# ============================================
+
+version: '3.8'
+
+services:
+  # ===========================================
+  # API SERVICE - FULL STACK
+  # ===========================================
+  api-full:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: projectbase-api
+    profiles: ["full"]
+    ports:
+      - "5000:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=postgres;Username=postgres;Password=${POSTGRES_PASSWORD}"
+      ConnectionStrings__Redis: "redis:6379,abortConnect=false"
+      JwtSettings__SecretKey: "dev-secret-key-must-be-at-least-32-characters-long!"
+      JwtSettings__RefreshTokenSecretKey: "dev-refresh-token-key-must-be-at-least-32-characters-long!"
+      JwtSettings__Issuer: "localhost"
+      JwtSettings__Audience: "localhost"
+      JwtSettings__ExpirationMinutes: "60"
+      JwtSettings__RefreshTokenExpiresInDays: "7"
+      SeedSettings__EnableInProduction: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - projectbase-network
+    restart: unless-stopped
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ===========================================
+  # API SERVICE - PRODUCTION
+  # ===========================================
+  api-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Build args
+      args:
+        BUILD_CONFIGURATION: Release
+    container_name: projectbase-api
+    profiles: ["prod"]
+    ports:
+      - "${API_PORT:-5000}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      JwtSettings__SecretKey: "${JWT_SECRET_KEY}"
+      JwtSettings__RefreshTokenSecretKey: "${JWT_REFRESH_TOKEN_SECRET_KEY}"
+      JwtSettings__Issuer: "${JWT_ISSUER:-api.projectbase.com}"
+      JwtSettings__Audience: "${JWT_AUDIENCE:-api.projectbase.com}"
+      JwtSettings__ExpirationMinutes: "${JWT_EXPIRES_MINUTES:-60}"
+      JwtSettings__RefreshTokenExpiresInDays: "${JWT_REFRESH_EXPIRES_DAYS:-7}"
+      SeedSettings__EnableInProduction: "${SEED_ENABLED:-false}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - projectbase-network
+    restart: unless-stopped
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '1.0'
+          memory: 512M
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=api,environment=production"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ===========================================
+  # POSTGRESQL - DEV
+  # ===========================================
+  postgres-dev:
+    image: postgres:18-alpine
+    container_name: projectbase-postgres-dev
+    profiles: ["dev"]
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: projectbase
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    networks:
+      - projectbase-network
+    restart: unless-stopped
+    # Security
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d projectbase"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ===========================================
+  # POSTGRESQL - FULL & PROD
+  # ===========================================
+  postgres:
+    image: postgres:18-alpine
+    container_name: projectbase-postgres
+    profiles: ["full", "prod"]
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-projectbase}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+      # Backup directory
+      - ./backups/postgres:/backups
+    networks:
+      - projectbase-network
+    restart: unless-stopped
+    # Security
+    security_opt:
+      - no-new-privileges:true
+    # Custom config
+    command: >
+      postgres
+      -c max_connections=100
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-projectbase}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '1.0'
+          memory: 512M
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ===========================================
+  # REDIS - DEV
+  # ===========================================
+  redis-dev:
+    image: redis:7-alpine
+    container_name: projectbase-redis-dev
+    profiles: ["dev"]
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-dev-data:/data
+    networks:
+      - projectbase-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # REDIS - FULL & PROD
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: projectbase-redis
+    profiles: ["full", "prod"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server 
+      --appendonly yes 
+      --maxmemory ${REDIS_MAXMEMORY:-256mb} 
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    volumes:
+      - redis-data:/data
+      # Backup directory
+      - ./backups/redis:/backups
+    networks:
+      - projectbase-network
+    restart: unless-stopped
+    # Security
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ===========================================
+# NETWORKS
+# ===========================================
+networks:
+  projectbase-network:
+    driver: bridge
+    # Network configuration
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ===========================================
+# VOLUMES
+# ===========================================
+volumes:
+  postgres-dev-data:
+    driver: local
+  redis-dev-data:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local

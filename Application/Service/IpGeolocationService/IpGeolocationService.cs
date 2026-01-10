@@ -1,4 +1,5 @@
-﻿using Domain.Abstraction;
+﻿using AutoMapper;
+using Domain.Abstraction;
 using Microsoft.Extensions.Logging;
 using System.Net.Http.Json;
 
@@ -8,13 +9,15 @@ public class IpGeolocationService : IIpGeolocationService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<IpGeolocationService> _logger;
+    private readonly IMapper _mapper;
     private const string BaseUrl = "https://ipapi.co";
 
-    public IpGeolocationService(HttpClient httpClient, ILogger<IpGeolocationService> logger)
+    public IpGeolocationService(HttpClient httpClient, ILogger<IpGeolocationService> logger, IMapper mapper)
     {
         _httpClient = httpClient;
         _logger = logger;
-        _httpClient.Timeout = TimeSpan.FromSeconds(5); // 5 soniya timeout
+        _mapper = mapper;
+        _httpClient.Timeout = TimeSpan.FromSeconds(5);
     }
 
     public async Task<IpLocationInfo?> GetLocationInfoAsync(string ipAddress, CancellationToken cancellationToken = default)
@@ -25,7 +28,6 @@ public class IpGeolocationService : IIpGeolocationService
             return null;
         }
 
-        // Localhost va private IP lar uchun ma'lumot qaytarmaymiz
         if (IsPrivateOrLocalIp(ipAddress))
         {
             _logger.LogDebug("Skipping geolocation for private/local IP: {IpAddress}", ipAddress);
@@ -53,14 +55,13 @@ public class IpGeolocationService : IIpGeolocationService
                 return null;
             }
 
-            // Agar error bo'lsa
             if (response.Error == true)
             {
                 _logger.LogWarning("IP API returned error for {IpAddress}: {Reason}", ipAddress, response.Reason);
                 return null;
             }
 
-            return MapToLocationInfo(response);
+            return _mapper.Map<IpLocationInfo>(response);
         }
         catch (HttpRequestException ex)
         {
@@ -79,48 +80,14 @@ public class IpGeolocationService : IIpGeolocationService
         }
     }
 
-    private static IpLocationInfo MapToLocationInfo(IpApiResponse response)
-    {
-        return new IpLocationInfo
-        {
-            Ip = response.Ip ?? string.Empty,
-            City = response.City,
-            Region = response.Region,
-            RegionCode = response.RegionCode,
-            Country = response.Country,
-            CountryName = response.CountryName,
-            CountryCode = response.CountryCode,
-            CountryCodeIso3 = response.CountryCodeIso3,
-            CountryCapital = response.CountryCapital,
-            CountryTld = response.CountryTld,
-            ContinentCode = response.ContinentCode,
-            Postal = response.Postal,
-            Latitude = response.Latitude,
-            Longitude = response.Longitude,
-            Timezone = response.Timezone,
-            UtcOffset = response.UtcOffset,
-            CountryCallingCode = response.CountryCallingCode,
-            Currency = response.Currency,
-            CurrencyName = response.CurrencyName,
-            Languages = response.Languages,
-            CountryArea = response.CountryArea,
-            CountryPopulation = response.CountryPopulation,
-            Asn = response.Asn,
-            Org = response.Org,
-            IsLocal = false
-        };
-    }
-
     private static bool IsPrivateOrLocalIp(string ipAddress)
     {
         if (string.IsNullOrWhiteSpace(ipAddress))
             return true;
 
-        // Localhost
         if (ipAddress == "::1" || ipAddress == "127.0.0.1" || ipAddress.StartsWith("127."))
             return true;
 
-        // Private IP ranges
         if (ipAddress.StartsWith("10."))
             return true;
 
@@ -137,11 +104,9 @@ public class IpGeolocationService : IIpGeolocationService
             }
         }
 
-        // Link-local
         if (ipAddress.StartsWith("169.254."))
             return true;
 
-        // IPv6 private
         if (ipAddress.StartsWith("fe80:", StringComparison.OrdinalIgnoreCase))
             return true;
 

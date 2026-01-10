@@ -1,4 +1,5 @@
 ﻿using Application.Extensions;
+using AutoMapper;
 using Consts;
 using Domain;
 using Domain.Abstraction;
@@ -23,6 +24,7 @@ public class AuthService : JwtTokenService, IAuthService
     private readonly IPasswordHasher<User> _passwordHasher;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IIpGeolocationService _ipGeolocationService;
+    private readonly IMapper _mapper;
 
     public AuthService(
         ITokenRepository tokenRepository,
@@ -31,12 +33,14 @@ public class AuthService : JwtTokenService, IAuthService
         IUserRepository userRepository,
         IPasswordHasher<User> passwordHasher,
         IUnitOfWork unitOfWork,
-        IIpGeolocationService ipGeolocationService)
+        IIpGeolocationService ipGeolocationService,
+        IMapper mapper)
         : base(jwtOptions, httpContextAccessor, userRepository, tokenRepository)
     {
         _passwordHasher = passwordHasher;
         _unitOfWork = unitOfWork;
         _ipGeolocationService = ipGeolocationService;
+        _mapper = mapper;
     }
 
     public async Task<Result> DeleteAsync(Guid accessTokenId)
@@ -52,7 +56,7 @@ public class AuthService : JwtTokenService, IAuthService
         return Result.Success();
     }
 
-    public async Task<Result<ResponceGenerateTokenDto>> GenerateTokenAsync(GenerateTokenDto dto)
+    public async Task<Result<TokenDto>> GenerateTokenAsync(GenerateTokenDto dto)
     {
         var httpContext = HttpContextAccessor.HttpContext;
         var userAgent = httpContext?.Request.Headers["User-Agent"].ToString() ?? string.Empty;
@@ -107,7 +111,7 @@ public class AuthService : JwtTokenService, IAuthService
     {
         var userResult = await _userRepository.GetByUsername(loginRequest.Username);
 
-        if (userResult.IsFailure || userResult.Value == null)
+        if (!userResult.IsSuccess || userResult.Value == null)
             return Result<TokenDto>.Failure(Error.LoginFaild);
 
         var result = _passwordHasher.VerifyHashedPassword(
@@ -128,7 +132,7 @@ public class AuthService : JwtTokenService, IAuthService
 
         var token = await GenerateTokenAsync(generateTokenDto);
 
-        if (token.IsFailure)
+        if (!token.IsSuccess)
             return Result<TokenDto>.Failure(token.Error);
 
         var response = new TokenDto
@@ -182,7 +186,7 @@ public class AuthService : JwtTokenService, IAuthService
 
         var newToken = await GenerateTokenAsync(generateTokenDto);
 
-        if (newToken.IsFailure)
+        if (!newToken.IsSuccess)
             return Result<TokenDto>.Failure(newToken.Error);
 
         var response = new TokenDto
@@ -199,7 +203,7 @@ public class AuthService : JwtTokenService, IAuthService
 
     #region Private Methods
 
-    private async Task<Result<ResponceGenerateTokenDto>> HandleTokenUpdate(
+    private async Task<Result<TokenDto>> HandleTokenUpdate(
         User user,
         Guid accessTokenId,
         Guid refreshTokenId,
@@ -223,7 +227,7 @@ public class AuthService : JwtTokenService, IAuthService
 
             await _unitOfWork.SaveChangesAsync();
 
-            var result = new ResponceGenerateTokenDto
+            var result = new TokenDto
             {
                 AccessToken = accessToken,
                 AccessTokenExpiryTime = accessTokenOptions.ValidTo,
@@ -232,10 +236,10 @@ public class AuthService : JwtTokenService, IAuthService
                 AuthType = authType.ToString()
             };
 
-            return Result<ResponceGenerateTokenDto>.Success(result);
+            return Result<TokenDto>.Success(result);
         }
 
-        return Result<ResponceGenerateTokenDto>.Failure(Error.TokenNotFound);
+        return Result<TokenDto>.Failure(Error.TokenNotFound);
     }
 
     private (string AccessToken, JwtSecurityToken TokenOptions) GenerateAccessToken(User user, List<Claim> claims)
@@ -278,7 +282,7 @@ public class AuthService : JwtTokenService, IAuthService
         return (refreshToken, tokenOptions);
     }
 
-    private async Task<Result<ResponceGenerateTokenDto>> HandleNewTokenCreation(
+    private async Task<Result<TokenDto>> HandleNewTokenCreation(
         User user,
         Guid accessTokenId,
         Guid refreshTokenId,
@@ -315,26 +319,11 @@ public class AuthService : JwtTokenService, IAuthService
             RefreshTokenExpireAt = refreshTokenOptions.ValidTo
         };
 
-        // 4. DeviceInfo entity yaratish
-        var deviceInfoEntity = new DeviceInfo
-        {
-            TokenId = tokenEntity.Id,
-            IpAddress = ipAddress,
-            DeviceType = deviceInfo.DeviceType ?? "Unknown",
-            DeviceModel = deviceInfo.DeviceName ?? "Unknown",
-            OsName = deviceInfo.OperatingSystem ?? "Unknown",
-            OsVersion = deviceInfo.BrowserVersion ?? "Unknown",
-            BrowserName = deviceInfo.Browser ?? "Unknown",
-            BrowserVersion = deviceInfo.BrowserVersion ?? "Unknown",
-            UserAgent = userAgent,
-            IsBot = deviceInfo.IsBot,
-            IsMobile = deviceInfo.IsMobile,
-            IsDesktop = deviceInfo.IsDesktop,
-            IsTrusted = false,
-            DeviceNickname = $"{deviceInfo.DeviceType} - {deviceInfo.Browser}",
-            LastActivityAt = DateTime.UtcNow,
-            LoginCount = 1
-        };
+        // 4. DeviceInfo entity yaratish (AutoMapper orqali)
+        var deviceInfoEntity = _mapper.Map<DeviceInfo>(deviceInfo);
+        deviceInfoEntity.TokenId = tokenEntity.Id;
+        deviceInfoEntity.IpAddress = ipAddress;
+        deviceInfoEntity.UserAgent = userAgent;
 
         // 5. Geolocation ma'lumotlarini qo'shish
         if (locationInfo != null)
@@ -348,7 +337,7 @@ public class AuthService : JwtTokenService, IAuthService
         await _unitOfWork.SaveChangesAsync();
 
         // 7. Response yaratish
-        var result = new ResponceGenerateTokenDto
+        var result = new TokenDto
         {
             AccessToken = accessToken,
             AccessTokenExpiryTime = accessTokenOptions.ValidTo,
@@ -357,7 +346,7 @@ public class AuthService : JwtTokenService, IAuthService
             AuthType = authType.ToString()
         };
 
-        return Result<ResponceGenerateTokenDto>.Success(result);
+        return Result<TokenDto>.Success(result);
     }
 
     #endregion

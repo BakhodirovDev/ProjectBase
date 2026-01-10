@@ -17,9 +17,11 @@ builder.Host.UseSerilog();
 
 var app = builder.Build();
 
-// Seed permissions and roles
-if (builder.Environment.IsDevelopment())
+// Seed data only in Development or if explicitly enabled
+if (builder.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("SeedSettings:EnableInProduction"))
 {
+    await app.ValidateDatabaseConnectionAsync();
+    await app.ApplyMigrationsAsync(maxRetries: 5);
     await SeedDefaultEnums.SeedAsync(app);
     await SeedDefaultInfo.SeedAsync(app);
     await SeedDefaultPersonAndUser.SeedAsync(app);
@@ -90,9 +92,8 @@ else if (swaggerEnabled && app.Environment.IsProduction())
 {
     Log.Warning("Swagger is enabled in Production environment!");
 }
-
-//app.UseSerilogRequestLogging();
-//app.UseHttpsRedirection();
+app.MapHealthChecks("/health");
+app.UseSerilogRequestLogging();
 app.UseResponseCompression();
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
@@ -104,8 +105,5 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseMiddleware<TokenValidationMiddleware>();
 app.UseAuthorization();
-
 app.MapControllers();
-
-
 app.Run();

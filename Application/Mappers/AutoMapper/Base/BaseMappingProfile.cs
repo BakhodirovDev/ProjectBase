@@ -1,6 +1,6 @@
 ﻿using AutoMapper;
 
-namespace Application.Mappers;
+namespace Application.Mappers.AutoMapper;
 
 public abstract class BaseMappingProfile : Profile
 {

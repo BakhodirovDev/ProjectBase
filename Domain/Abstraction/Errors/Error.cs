@@ -12,7 +12,7 @@ public sealed record Error
     /// <summary>
     /// Human-readable error message
     /// </summary>
-    public string Message { get; init; }
+    public string? Message { get; init; }
 
     /// <summary>
     /// HTTP status code associated with this error
@@ -34,7 +34,7 @@ public sealed record Error
     /// </summary>
     public DateTime Timestamp { get; init; }
 
-    private Error(string code, string message,
+    private Error(string code, string? message,
         HttpStatusCode statusCode = HttpStatusCode.InternalServerError,
         Dictionary<string, object>? details = null,
         Error? innerError = null)
@@ -56,7 +56,7 @@ public sealed record Error
     /// </summary>
     public static readonly Error None = new(
         ErrorCodes.None,
-        "No error",
+        null,
         HttpStatusCode.OK);
 
     /// <summary>

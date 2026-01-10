@@ -26,7 +26,7 @@
 | 🗄️ **Entity Framework Core** | PostgreSQL bilan ishlash, Migrations, Seeding |
 | 📦 **Redis** | SignalR uchun distributed cache |
 | 🗜️ **Response Compression** | Gzip va Brotli siqish |
-| ❤️ **Health Checks** | PostgreSQL va DbContext monitoring |
+| ❤️ **Health Checks** | PostgreSQL va DbContext monitoring (`/health` endpoint) |
 | 🌍 **IP Geolocation** | Foydalanuvchi joylashuvini aniqlash |
 | 🔄 **AutoMapper** | Object mapping |
 | ⚠️ **Global Exception Handling** | ProblemDetails standarti bilan xatolarni boshqarish |
@@ -41,8 +41,10 @@ Loyiha **Clean Architecture** (Onion Architecture) asosida tuzilgan:
 ProjectBase/
 ├── 📁 Domain/                    # Core business logic
 │   ├── Abstraction/              # Interfaces, Base classes, Errors
-│   │   ├── Attributes/           # Custom attributes
-│   │   ├── Authentication/       # Auth DTOs, Permissions
+│   │   ├── Attributes/           # Custom attributes (RequirePermission)
+│   │   ├── Authentication/       # Auth DTOs, Handler, Provider
+│   │   │   ├── Handler/          # PermissionAuthorizationHandler
+│   │   │   └── Provider/         # PermissionPolicyProvider, PermissionRequirement
 │   │   ├── Base/                 # Entity, AuditableEntity, IBaseRepository
 │   │   ├── Configuration/        # Auth configuration models
 │   │   ├── Consts/               # Constants (Status, Gender, Countries...)
@@ -56,6 +58,9 @@ ProjectBase/
 │   │   └── Results/              # Result<T> pattern
 │   └── EfClasses/                # Entity classes
 │       ├── Authentication/       # Permission, Role, UserRole
+│       │   └── Permissions/
+│       │       ├── DTOs/         # PermissionDto, CreatePermissionDto, UpdatePermissionDto
+│       │       └── Interface/    # IPermissionService, IPermissionRepository
 │       ├── Enums/                # EnumStatus, EnumGender...
 │       ├── Info/                 # Country, Region, District...
 │       ├── Person/               # Person entity
@@ -67,7 +72,7 @@ ProjectBase/
 │   ├── Mappers/                  # AutoMapper profiles
 │   └── Service/                  # Business services
 │       ├── Authentication/       # AuthService, JwtTokenService
-│       ├── BaseService/          # CrudServiceBase
+│       ├── BaseService/          # CrudService (generic CRUD operations)
 │       └── IpGeolocationService/ # IP location service
 │
 ├── 📁 Infrastructure/            # Data access & external services
@@ -87,7 +92,7 @@ ProjectBase/
 │
 └── 📁 ProjectBase.Web/           # API Layer
     ├── Controllers/              # API endpoints
-    ├── Extensions/               # DI, Swagger, Policies, Filters
+    ├── Extensions/               # DI, Swagger, Policies, ResultExtensions, Filters
     ├── Middleware/               # Exception, Token validation
     ├── wwwroot/                  # Static files
     └── logs/                     # Serilog log files
@@ -97,23 +102,23 @@ ProjectBase/
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    ProjectBase.Web                       │
-│              (Controllers, Middleware, DI)               │
+│                    ProjectBase.Web                      │
+│              (Controllers, Middleware, DI)              │
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
-│                     Application                          │
-│            (Services, Mappers, Extensions)               │
+│                     Application                         │
+│            (Services, Mappers, Extensions)              │
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
-│                    Infrastructure                        │
-│      (DbContext, Repositories, Configurations)           │
+│                    Infrastructure                       │
+│      (DbContext, Repositories, Configurations)          │
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
-│                       Domain                             │
-│    (Entities, Interfaces, Errors, Business Rules)        │
+│                       Domain                            │
+│    (Entities, Interfaces, Errors, Business Rules)       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -138,6 +143,7 @@ ProjectBase/
 | `System.IdentityModel.Tokens.Jwt` | 8.15.0 | JWT token handling |
 | `StackExchange.Redis` | Latest | Redis client |
 | `Newtonsoft.Json` | 13.0.3 | JSON serialization |
+| `AspNetCore.HealthChecks.NpgSql` | Latest | PostgreSQL health check |
 
 ---
 
@@ -225,6 +231,9 @@ https://localhost:5001/swagger/v1/index.html
     "Title": "ProjectBase API",
     "AllowedSwaggerIPs": ["127.0.0.1", "::1"]
   },
+  "SeedSettings": {
+    "EnableInProduction": false
+  },
   "AllowedOrigins": [
     "https://your-frontend.com"
   ],
@@ -276,6 +285,7 @@ https://localhost:5001/swagger/v1/index.html
 | `GET` | `/Auth/RefreshToken` | Tokenni yangilash |
 | `GET` | `/Auth/Logout` | Tizimdan chiqish |
 | `GET` | `/Auth/IsSecure` | Autentifikatsiyani tekshirish |
+| `GET` | `/health` | Health check endpoint |
 
 ---
 
@@ -309,13 +319,23 @@ public abstract class AuditableEntity<TId> : Entity<TId>
 
 ```csharp
 // Muvaffaqiyatli natija
-return Result.Success();
-return Result<User>.Success(user);
+return Result.Success();                              // { "isSuccess": true, "message": "Successfully" }
+return Result.Success("Muvaffaqiyatli saqlandi");     // Custom message bilan
+return Result<User>.Success(user);                    // { "isSuccess": true, "data": {...}, "message": "Successfully" }
+return Result<User>.SuccessWithMessage(user, "User topildi");
 
-// Xato natija
-return Result.Failure(Error.NotFound);
+// Xato natija (Error yashirilgan - JSON da ko'rinmaydi)
+return Result.Failure(Error.NotFound);                // { "isSuccess": false, "message": "Not found" }
 return Result<User>.Failure("USER_NOT_FOUND", "User not found");
+
+// Controller'da ishlatish (ResultExtensions bilan)
+return await _service.GetAsync(id).ToActionResultAsync();           // Avtomatik status code
+return await _service.CreateAsync(dto).ToCreatedResultAsync();      // 201 Created
+return await _service.DeleteAsync(id).ToNoContentResultAsync();     // 204 No Content
+return await _service.LoginAsync(dto).ToActionResultSafeAsync(_logger); // Exception handling bilan
 ```
+
+> ⚠️ **Muhim:** `Error` property `[JsonIgnore]` bilan belgilangan - JSON javobda ko'rinmaydi, faqat `message` ko'rsatiladi.
 
 ### Repository Pattern
 
@@ -332,33 +352,125 @@ public interface IBaseRepository<TEntity, TId>
 }
 ```
 
+### AutoMapper Integration
+
+```csharp
+// Mapping profile yaratish
+public class UserMappingProfile : Profile
+{
+    public UserMappingProfile()
+    {
+        CreateMap<User, UserDto>();
+        CreateMap<CreateUserDto, User>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore());
+    }
+}
+
+// Service'da ishlatish
+public class UserService
+{
+    private readonly IMapper _mapper;
+    
+    public async Task<UserDto> GetByIdAsync(Guid id)
+    {
+        var user = await _repository.GetByIdAsync(id);
+        return _mapper.Map<UserDto>(user);
+    }
+}
+```
+
+### ResultExtensions (Controller uchun)
+
+```csharp
+// Oddiy result
+return result.ToActionResult();                    // 200 OK yoki error status
+
+// Custom status code
+return result.ToActionResult(HttpStatusCode.Created);  // 201 Created
+return result.ToNoContentResult();                     // 204 No Content
+
+// Async bilan
+return await _service.GetAsync(id).ToActionResultAsync();
+return await _service.CreateAsync(dto).ToCreatedResultAsync();
+
+// Exception handling bilan (try-catch avtomatik)
+return await _service.LoginAsync(dto).ToActionResultSafeAsync(_logger);
+
+// Match pattern
+return result.Match(
+    onSuccess: data => Ok(data),
+    onFailure: error => BadRequest(error.Message)
+);
+```
+
+> Controller'da if/else va try-catch yozish shart emas - `ResultExtensions` barchasini avtomatik bajaradi.
+
 ---
 
 ## 🔒 Permission System
 
-### Permission Attribute
+Loyihada to'liq permission-based authorization tizimi mavjud.
+
+### Permission Entity
 
 ```csharp
-[PermissionModule("System", "Tizim sozlamalari")]
-public enum SystemPermissions
+public class Permission : AuditableEntity<Guid>
 {
-    [PermissionInfo("system.view", IsReadOnly = true)]
-    View,
-
-    [PermissionInfo("system.update", IsCritical = true)]
-    Update,
-
-    [PermissionInfo("system.backup", IsCritical = true)]
-    Backup
+    public string Name { get; set; }        // "users.create"
+    public string Description { get; set; } // "Foydalanuvchi yaratish"
+    public string Resource { get; set; }    // "users"
+    public string Action { get; set; }      // "create"
 }
 ```
 
-### Controller'da ishlatish
+### RequirePermission Attribute
 
 ```csharp
-[Authorize(Policy = "system.view")]
-[HttpGet]
-public async Task<IActionResult> GetSettings() { }
+// String bilan
+[RequirePermission("users.create")]
+[HttpPost]
+public async Task<IActionResult> CreateUser() { }
+
+// Enum bilan
+[RequirePermission(UserPermissions.Create)]
+[HttpPost]
+public async Task<IActionResult> CreateUser() { }
+
+// Bir nechta permission
+[RequirePermission("users.view")]
+[RequirePermission("users.edit")]
+[HttpPut]
+public async Task<IActionResult> UpdateUser() { }
+```
+
+### IPermissionService
+
+```csharp
+public interface IPermissionService
+{
+    Task<Result<List<PermissionDto>>> GetByUserIdAsync(Guid userId);
+    Task<Result<List<PermissionDto>>> GetByRoleIdAsync(Guid roleId);
+    Task<Result<bool>> UserHasPermissionAsync(Guid userId, string permissionName);
+    Task<Result<bool>> UserHasAllPermissionsAsync(Guid userId, IEnumerable<string> permissions);
+    Task<Result<bool>> UserHasAnyPermissionAsync(Guid userId, IEnumerable<string> permissions);
+}
+```
+
+### Permission Flow
+
+```
+1. User login qilganda JWT token olinadi
+        │
+        ▼
+2. Token'da permission claim'lar mavjud
+   { "permission": ["users.view", "users.create", ...] }
+        │
+        ▼
+3. [RequirePermission] attribute so'rovni tekshiradi
+        │
+        ▼
+4. PermissionAuthorizationHandler permission borligini tasdiqlaydi
 ```
 
 ---
@@ -475,48 +587,170 @@ dotnet test --collect:"XPlat Code Coverage"
 
 ## 📦 Deployment
 
-### Docker
+### 🐳 Docker
 
-```dockerfile
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
-WORKDIR /app
-EXPOSE 80 443
+Loyihada **bitta unified** Docker Compose fayl mavjud - **profiles** orqali turli rejimlarni boshqarish:
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
-WORKDIR /src
-COPY . .
-RUN dotnet restore
-RUN dotnet publish -c Release -o /app/publish
+| Fayl | Tavsif |
+|------|--------|
+| `Dockerfile` | Multi-stage production build |
+| `docker-compose.yml` | **Unified** - barcha rejimlar bitta faylda |
+| `.env.example` | Environment variables namunasi |
+| `.dockerignore` | Docker build uchun ignore fayllar |
 
-FROM base AS final
-WORKDIR /app
-COPY --from=build /app/publish .
-ENTRYPOINT ["dotnet", "ProjectBase.WebApi.dll"]
+### 📌 Profiles
+
+| Profile | Buyruq | Servislar |
+|---------|--------|-----------|
+| `dev` | `docker-compose --profile dev up -d` | PostgreSQL + Redis + pgAdmin |
+| `full` | `docker-compose --profile full up -d` | API + PostgreSQL + Redis + pgAdmin (hardcoded) |
+| `prod` | `docker-compose --profile prod up -d` | API + PostgreSQL + Redis (.env dan) |
+
+### 💡 Smart Defaults
+
+`.env` da host ko'rsatilmasa, avtomatik **ichki konteyner** ishlatiladi:
+
+| `.env` holati | Natija |
+|---------------|--------|
+| `POSTGRES_HOST=` (bo'sh) | ✅ Ichki `postgres` konteyner |
+| `POSTGRES_HOST=db.example.com` | ✅ Tashqi serverga ulanadi |
+| `REDIS_HOST=` (bo'sh) | ✅ Ichki `redis` konteyner |
+| `REDIS_HOST=redis.aws.com` | ✅ Tashqi Redis ga ulanadi |
+
+### 🚀 Tez boshlash
+
+```bash
+# 1. Development (faqat DB, API lokal)
+docker-compose --profile dev up -d
+cd ProjectBase.Web && dotnet run
+
+# 2. Full Stack (hammasi Docker ichida)
+docker-compose --profile full up -d
+
+# 3. Production (.env bilan)
+cp .env.example .env
+# .env ni to'ldiring
+docker-compose --profile prod up -d
+
+# To'xtatish
+docker-compose --profile <profile> down
 ```
 
-### Docker Compose
+### 🔐 CI/CD bilan Deploy (Secrets bilan)
 
-```yaml
-version: '3.8'
-services:
-  api:
-    build: .
-    ports:
-      - "5000:80"
-    depends_on:
-      - db
-      - redis
-    environment:
-      - ConnectionStrings__DefaultConnection=Host=db;Database=mydb;Username=postgres;Password=postgres
+**Loyihada secrets hech qachon kodda yozilmaydi!** Barcha maxfiy ma'lumotlar CI/CD tizimidan olinadi:
 
-  db:
-    image: postgres:14
-    environment:
-      POSTGRES_DB: mydb
-      POSTGRES_PASSWORD: postgres
+```bash
+# 1. .env.example ni nusxalang
+cp .env.example .env
 
-  redis:
-    image: redis:7-alpine
+# 2. .env faylini to'ldiring (git ga push QILMANG!)
+nano .env
+
+# 3. Production ishga tushiring
+docker-compose --profile prod up -d
+```
+
+### GitHub Actions bilan Deploy
+
+1. GitHub repo → **Settings** → **Secrets and variables** → **Actions**
+2. Quyidagi secrets qo'shing:
+
+| Secret | Tavsif |
+|--------|--------|
+| `DOCKER_USERNAME` | Docker Hub username |
+| `DOCKER_PASSWORD` | Docker Hub password/token |
+| `SSH_HOST` | Server IP manzili |
+| `SSH_USERNAME` | SSH username |
+| `SSH_PRIVATE_KEY` | SSH private key |
+| `POSTGRES_PASSWORD` | Database password |
+| `JWT_SECRET_KEY` | JWT secret key (32+ belgi) |
+
+3. `main` branch ga push qilganingizda avtomatik deploy bo'ladi
+
+### Jenkins bilan Deploy
+
+1. **Manage Jenkins** → **Credentials** → **System** → **Global credentials**
+2. Quyidagi credentials qo'shing:
+   - `ssh-credentials` (SSH Username with private key)
+   - `ssh-host` (Secret text - Server IP)
+   - `postgres-password` (Secret text)
+   - `jwt-secret-key` (Secret text - 32+ belgi)
+
+3. Pipeline yarating va `Jenkinsfile` ni ishlatishini belgilang
+
+> 💡 **Jenkins serverda build qiladi** - Docker Hub ga push qilmaydi, to'g'ridan-to'g'ri production serverda docker-compose bilan deploy qiladi.
+
+### 🖥️ HTTP bilan (Docker'siz)
+
+Docker o'rnatmasdan ham loyihani ishga tushirish mumkin:
+
+```bash
+# 1. PostgreSQL va Redis o'rnating (Windows)
+# PostgreSQL: https://postgresql.org/download/windows/
+# Redis: https://github.com/tporadowski/redis/releases
+
+# 2. appsettings.Development.json to'ldiring
+# 3. API ni ishga tushiring
+cd ProjectBase.Web
+dotnet run
+```
+
+### Servislar va Portlar
+
+| Servis | Port | URL |
+|--------|------|-----|
+| API | 5000 | http://localhost:5000 |
+| Swagger | 5000 | http://localhost:5000/swagger |
+| PostgreSQL | 5432 | localhost:5432 |
+| Redis | 6379 | localhost:6379 |
+| pgAdmin | 5050 | http://localhost:5050 |
+
+### 🌐 Tashqi Database ga ulanish
+
+Agar sizda allaqachon PostgreSQL server mavjud bo'lsa, `.env` faylida host ni ko'rsating:
+
+```bash
+# .env
+POSTGRES_HOST=db.example.com
+POSTGRES_PASSWORD=your_secure_password
+REDIS_HOST=redis.example.com
+```
+
+> 💡 Host bo'sh qoldirilsa, Docker ichki konteynerlardan foydalanadi.
+
+### Faqat API image yaratish
+
+```bash
+# Image yaratish
+docker build -t projectbase-api:latest .
+
+# Konteyner ishga tushirish (tashqi DB bilan)
+docker run -d -p 5000:8080 \
+  -e ConnectionStrings__DefaultConnection="Host=host.docker.internal;Port=5432;Database=projectbase;Username=postgres;Password=postgres" \
+  -e ConnectionStrings__Redis="host.docker.internal:6379" \
+  --name projectbase-api \
+  projectbase-api:latest
+```
+
+### Dockerfile (Multi-stage)
+
+```dockerfile
+# Stage 1: Build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY ["ProjectBase.Web.sln", "./"]
+# ... restore & build ...
+
+# Stage 2: Runtime (Alpine - kichik hajm)
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+ENV ASPNETCORE_URLS=http://+:8080
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD wget --spider http://localhost:8080/health || exit 1
+ENTRYPOINT ["dotnet", "ProjectBase.WebApi.dll"]
 ```
 
 ---

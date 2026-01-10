@@ -1,9 +1,10 @@
 ﻿using Domain;
 using Domain.Abstraction.Authentication;
-using Domain.Abstraction.Errors;
 using Domain.Abstraction.Results;
+using Domain.EfClasses;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using ProjectBase.WebApi.Extensions;
 using Swashbuckle.AspNetCore.Annotations;
 using System.ComponentModel.DataAnnotations;
 
@@ -15,10 +16,12 @@ namespace ProjectBase.WebApi.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IAuthService authService, ILogger<AuthController> logger)
     {
         _authService = authService;
+        _logger = logger;
     }
 
     [HttpPost("SignIn")]
@@ -26,78 +29,51 @@ public class AuthController : ControllerBase
         Summary = "Foydalanuvchi tizimga kirishi",
         Description = "Foydalanuvchi tizimga login va parol orqali kirishi."
     )]
-    [SwaggerResponse(200, "Muvaffaqiyatli login", typeof(Result<LoginRequest>))]
+    [SwaggerResponse(200, "Muvaffaqiyatli login", typeof(Result<TokenDto>))]
     [SwaggerResponse(400, "Login yoki parol noto'g'ri")]
     [AllowAnonymous]
-    public async Task<ActionResult<Result<LoginRequest>>> Login([Required][FromBody] LoginRequest loginRequest)
+    public async Task<ActionResult<TokenDto>> Login([Required][FromBody] LoginRequest loginRequest)
     {
-
-        var userToken = await _authService.LoginAsync(loginRequest);
-        if (userToken.IsFailure) return BadRequest(userToken);
-
-        return Ok(userToken);
+        return await _authService.LoginAsync(loginRequest).ToActionResultSafeAsync(_logger);
     }
 
     [HttpGet("RefreshToken")]
     [SwaggerOperation(
-            Summary = "Access tokenni yangilash",
-            Description = "Amaldagi access token va refresh token orqali yangi access token yaratish."
-        )]
-    [SwaggerResponse(200, "Tokens muvaffaqiyatli yangilandi", typeof(Result<LoginRequest>))]
+        Summary = "Access tokenni yangilash",
+        Description = "Amaldagi access token va refresh token orqali yangi access token yaratish."
+    )]
+    [SwaggerResponse(200, "Tokens muvaffaqiyatli yangilandi", typeof(Result<TokenDto>))]
     [SwaggerResponse(400, "Noto'g'ri so'rov ma'lumotlari")]
     [SwaggerResponse(401, "Avtorizatsiya talab qilinadi")]
     [SwaggerResponse(500, "Server ichki xatosi")]
     [AllowAnonymous]
-    public async Task<ActionResult<Result<LoginRequest>>> RefreshToken([Required] string refreshToken)
+    public async Task<ActionResult<TokenDto>> RefreshToken([Required] string refreshToken)
     {
-        try
-        {
-            var newToken = await _authService.RefreshTokenAsync(refreshToken);
-
-            if (newToken.IsFailure) return BadRequest(newToken);
-
-            return Ok(newToken);
-        }
-        catch
-        {
-            return StatusCode(StatusCodes.Status500InternalServerError, Result<LoginRequest>.Failure(Error.NullValue));
-        }
+        return await _authService.RefreshTokenAsync(refreshToken).ToActionResultSafeAsync(_logger);
     }
 
     [HttpGet("Logout")]
     [SwaggerOperation(
-            Summary = "Foydalanuvchini tizimdan chiqish",
-            Description = "Foydalanuvchini tizimdan muvaffaqiyatli chiqishini ta'minlaydi."
-        )]
+        Summary = "Foydalanuvchini tizimdan chiqish",
+        Description = "Foydalanuvchini tizimdan muvaffaqiyatli chiqishini ta'minlaydi."
+    )]
     [SwaggerResponse(200, "Foydalanuvchi muvaffaqiyatli chiqdi", typeof(Result))]
     [SwaggerResponse(401, "Avtorizatsiya talab qilinadi")]
     [SwaggerResponse(500, "Xato yuz berdi, chiqishda muammo")]
-    public async Task<ActionResult<Result>> UserLogout()
+    public async Task<ActionResult> UserLogout()
     {
-        try
-        {
-            var result = await _authService.LogoutAsync();
-
-            if (result.IsSuccess) return Ok(result);
-
-            return BadRequest(Result.Failure(Error.LogoutFaild));
-
-        }
-        catch
-        {
-            return StatusCode(StatusCodes.Status500InternalServerError, Result.Failure(Error.NullValue));
-        }
+        return await _authService.LogoutAsync().ToActionResultSafeAsync(_logger);
     }
 
     [HttpGet("IsSecure")]
     [SwaggerOperation(
-            Summary = "Foydalanuvchining xavfsizligini tekshirish",
-            Description = "Foydalanuvchi avtorizatsiya qilinganligi va xavfsizligini tasdiqlaydi."
-        )]
+        Summary = "Foydalanuvchining xavfsizligini tekshirish",
+        Description = "Foydalanuvchi avtorizatsiya qilinganligi va xavfsizligini tasdiqlaydi."
+    )]
     [SwaggerResponse(200, "Foydalanuvchi muvaffaqiyatli avtorizatsiya qilingan", typeof(Result))]
     [SwaggerResponse(401, "Avtorizatsiya talab qilinadi")]
     public ActionResult<Result> IsSecureUser()
     {
-        return Ok(Result.Success());
+        return Result.Success().ToActionResult();
     }
 }

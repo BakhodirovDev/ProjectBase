@@ -13,7 +13,7 @@ namespace Application.Service.BaseService;
 /// Base CRUD service implementation - Production ready, extensible
 /// NEVER MODIFY - Extend instead!
 /// </summary>
-public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TUpdateDto, TPaginationOptions>
+public abstract class CrudService<TEntity, TGetDto, TListDto, TCreateDto, TUpdateDto, TPaginationOptions>
     : ICrudService<TGetDto, TListDto, TCreateDto, TUpdateDto, TPaginationOptions>
     where TEntity : Entity<Guid>
     where TPaginationOptions : PaginationParameters
@@ -23,7 +23,7 @@ public abstract class CrudServiceBase<TEntity, TGetDto, TListDto, TCreateDto, TU
     protected readonly ILogger Logger;
     protected readonly IUnitOfWork UnitOfWork;
 
-    protected CrudServiceBase(
+    protected CrudService(
         IBaseRepository<TEntity> repository,
         IMapper mapper,
         ILogger logger,

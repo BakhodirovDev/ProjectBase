@@ -6,7 +6,7 @@ namespace Domain;
 
 public interface IAuthService
 {
-    Task<Result<ResponceGenerateTokenDto>> GenerateTokenAsync(GenerateTokenDto dto);
+    Task<Result<TokenDto>> GenerateTokenAsync(GenerateTokenDto dto);
     Task<Result<TokenDto>> RefreshTokenAsync(string refreshToken);
     Task<Result<TokenDto>> LoginAsync(LoginRequest loginRequest);
     Task<Result<TokenDto>> LoginWithGoogleAsync(string token);

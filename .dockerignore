@@ -1,0 +1,60 @@
+# ===========================================
+# Docker Ignore File
+# ===========================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vs
+.vscode
+.idea
+*.user
+*.suo
+*.sln.docstates
+
+# Build outputs
+**/bin
+**/obj
+**/out
+**/publish
+
+# NuGet
+**/packages
+
+# Logs
+**/logs
+**/*.log
+
+# Docker
+**/Dockerfile*
+**/docker-compose*
+**/.dockerignore
+
+# Documentation
+*.md
+LICENSE*
+README*
+
+# Tests
+**/*Tests
+**/*Test
+**/TestResults
+
+# Misc
+**/.DS_Store
+**/Thumbs.db
+**/*.swp
+**/*.swo
+
+# Environment files
+.env
+.env.*
+*.local
+
+# Secrets (never include in Docker image!)
+**/secrets
+**/appsettings.*.json
+!**/appsettings.json
